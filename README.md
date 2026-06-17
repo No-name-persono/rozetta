@@ -1,41 +1,65 @@
 # Rozeeta
 
-Rozeeta is a small call-processing service for QA workflows. It accepts audio recordings, sends them through SpeechKit STT, enriches the transcript with optional soft speaker labels, asks an LLM to evaluate the call, and returns structured JSON with:
+Rozeeta — небольшой сервис для обработки и оценки звонков. Он принимает аудиозаписи, отправляет их в Yandex SpeechKit STT, при необходимости строит мягкие метки спикеров, передаёт расшифровку в LLM и возвращает структурированный JSON для CRM, BI, внутренней админки или другого внешнего хранилища.
 
-- processing status;
-- business analysis status;
-- transcript segments with timestamps;
-- LLM summary;
-- checklist answers with quotes and timestamps;
-- optional soft speaker-label hints.
+Проект лучше воспринимать не как архив результатов, а как обработчик: загрузили запись, получили расшифровку, чек-лист, бизнес-статус и цитаты с таймкодами, сохранили результат у себя.
 
-The app has a simple web UI, but the useful deployment shape is API-first: another system can upload audio, poll the batch, store the result wherever it already keeps call data, and ignore Rozeeta after processing.
+## Что умеет
 
-## Quick Start With Docker
+- пакетная обработка аудиофайлов;
+- SpeechKit STT v3 по умолчанию;
+- анализ звонка через YandexGPT-совместимый API;
+- редактируемые промты и чек-листы;
+- отдельный API с Bearer-ключами;
+- CLI для создания и отзыва API-ключей;
+- мягкие spectral-метки спикеров;
+- Docker/Docker Compose запуск.
 
-Create your environment file:
+## Быстрый запуск через Docker
+
+Создайте файл окружения:
 
 ```bash
 cp .env.example .env
 ```
 
-Fill in Yandex Cloud, Object Storage, and LLM credentials in `.env`, then run:
+Заполните в `.env` параметры Yandex Cloud, Object Storage и LLM, затем запустите:
 
 ```bash
 docker compose up --build -d
 ```
 
-Health check:
+Проверка здоровья сервиса:
 
 ```bash
 curl http://127.0.0.1:5010/api/v1/health
 ```
 
-## API Keys
+Веб-интерфейс будет доступен на:
 
-API keys are created from the terminal and are never shown in the web interface. Only SHA-256 hashes are stored in SQLite.
+```text
+http://127.0.0.1:5010/
+```
 
-Inside Docker:
+## Настройки
+
+Основные переменные в `.env`:
+
+- `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` — S3/Object Storage для временной передачи аудио в SpeechKit;
+- `YANDEX_API_KEY` или `YANDEX_IAM_TOKEN` — авторизация в SpeechKit;
+- `YANDEX_FOLDER_ID` — folder id в Yandex Cloud;
+- `ASR_API_VERSION=v3` — версия STT API;
+- `ASR_MODEL=general` — модель распознавания;
+- `LLM_MODEL_URI`, `LLM_API_KEY` или `LLM_IAM_TOKEN` — параметры LLM;
+- `SPECTRAL_ENABLED=1` — включить мягкие метки спикеров;
+- `ASYNC_MAX_WORKERS=4` — параллельность обработки;
+- `MAX_UPLOAD_MB=64` — максимальный размер загрузки.
+
+## API-ключи
+
+API-ключи создаются только из терминала и не отображаются в веб-интерфейсе. В SQLite хранится SHA-256 хэш ключа, а сам ключ показывается один раз при создании.
+
+В Docker:
 
 ```bash
 docker compose exec rozeeta python api_keys.py create my-integration
@@ -43,30 +67,38 @@ docker compose exec rozeeta python api_keys.py list
 docker compose exec rozeeta python api_keys.py revoke 1
 ```
 
-Locally:
+Локально:
 
 ```bash
 python api_keys.py create my-integration
+python api_keys.py list
+python api_keys.py revoke 1
 ```
 
-Save the generated key immediately. It is shown once.
+Сохраните созданный ключ сразу. Повторно показать его нельзя.
 
 ## API
 
-Use:
+Для закрытых методов используйте заголовок:
 
 ```http
 Authorization: Bearer <api-key>
 ```
 
-List prompts and checklists:
+Открытая проверка здоровья:
+
+```bash
+curl http://127.0.0.1:5010/api/v1/health
+```
+
+Получить список промтов и чек-листов:
 
 ```bash
 curl -H "Authorization: Bearer $ROZEETA_API_KEY" \
   http://127.0.0.1:5010/api/v1/templates
 ```
 
-Create a batch:
+Создать batch:
 
 ```bash
 curl -X POST http://127.0.0.1:5010/api/v1/batches \
@@ -76,23 +108,25 @@ curl -X POST http://127.0.0.1:5010/api/v1/batches \
   -F "audio_files=@/path/to/call.mp3"
 ```
 
-Poll processing status:
+Проверить статус обработки:
 
 ```bash
 curl -H "Authorization: Bearer $ROZEETA_API_KEY" \
   http://127.0.0.1:5010/api/v1/batches/<batch-id>
 ```
 
-Fetch results:
+Получить результат:
 
 ```bash
 curl -H "Authorization: Bearer $ROZEETA_API_KEY" \
   http://127.0.0.1:5010/api/v1/batches/<batch-id>/results
 ```
 
-## Result Shape
+## Формат результата
 
-Each item has a technical processing status and a separate business analysis status:
+У каждой записи есть технический статус обработки `status` и отдельный бизнес-статус анализа `analysis_status`.
+
+Пример:
 
 ```json
 {
@@ -105,38 +139,59 @@ Each item has a technical processing status and a separate business analysis sta
     "label": "целевой",
     "reason": "оснований для нецелевого не выявлено",
     "raw": "целевой — оснований для нецелевого не выявлено"
-  }
+  },
+  "segments": [],
+  "transcript": "...",
+  "llm": "...",
+  "checklist": {},
+  "soft_labels": "<audio_analysis>...</audio_analysis>"
 }
 ```
 
-Known `analysis_status.value` values:
+Возможные значения `analysis_status.value`:
 
-- `target`
-- `not_target`
-- `interested`
-- `uncertain`
-- `unknown`
+- `target` — целевой звонок;
+- `not_target` — нецелевой звонок;
+- `interested` — клиент заинтересован;
+- `uncertain` — статус не определён;
+- `unknown` — статус не удалось извлечь из ответа модели.
 
-## Runtime Notes
+## Важные замечания
 
-- Keep Gunicorn at one worker while batch state is in memory. The Dockerfile already does this.
-- API keys are persisted in `data/api_keys.sqlite3`; Docker Compose stores `/app/data` in a named volume.
-- Batch results are intentionally transient and live in process memory. Store completed API responses in your CRM, BI, data lake, or queue consumer.
-- Uploaded audio is temporarily stored in `tmp_audio/` and deleted after processing.
+- Результаты batch-задач сейчас живут в памяти процесса. После перезапуска сервиса старые `batch_id` не восстановятся.
+- Это сделано намеренно: предполагается, что внешний потребитель забирает `/results` и сохраняет данные в своём хранилище.
+- В Dockerfile используется один Gunicorn worker и несколько threads. Не увеличивайте количество worker-процессов, пока состояние batch-задач хранится в памяти.
+- API-ключи хранятся в `data/api_keys.sqlite3`; в Docker Compose каталог `/app/data` вынесен в volume.
+- Загруженные аудиофайлы временно лежат в `tmp_audio/` и удаляются после обработки.
+- Настоящий `.env`, SQLite-база ключей, временные аудио и кэши исключены из git.
 
-## Development
+## Локальная разработка
 
-```bash
+Windows:
+
+```powershell
 python -m venv .venv
-.venv/Scripts/pip install -r requirements.txt
-.venv/Scripts/python app.py
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe app.py
 ```
 
-On Linux/macOS:
+Linux/macOS:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 python app.py
+```
+
+## Проверка
+
+```bash
+python -m py_compile app.py api_keys.py config.py blueprints/*.py services/*.py
+```
+
+Если Docker daemon запущен:
+
+```bash
+docker build -t rozeeta:local .
 ```
