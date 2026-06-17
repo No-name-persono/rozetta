@@ -59,6 +59,7 @@ def _item_result(item: dict[str, Any]) -> dict[str, Any]:
             "llm": item.get("llm"),
             "checklist": item.get("checklist"),
             "soft_labels": item.get("soft_labels"),
+            "speech_ranges_count": item.get("speech_ranges_count"),
         }
     )
     return row

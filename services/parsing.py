@@ -73,6 +73,60 @@ def build_segments(op_json: Dict[str, Any]) -> List[Dict[str, Any]]:
     return segments
 
 
+def build_speech_ranges(
+    op_json: Dict[str, Any],
+    max_gap_sec: float = 0.8,
+    padding_sec: float = 0.2,
+) -> List[Tuple[float, float]]:
+    """
+    Builds compact speech-only time ranges from STT word timestamps.
+    Ranges are later used to keep spectral speaker analysis away from noise,
+    hold music, long silence, and non-speech tails.
+    """
+    chunks = (op_json.get("response") or {}).get("chunks") or []
+    word_ranges: List[Tuple[float, float]] = []
+
+    def _t(ts):
+        try:
+            return float(str(ts).rstrip("s"))
+        except Exception:
+            return None
+
+    for ch in chunks:
+        best = (ch.get("alternatives") or [{}])[0]
+        for word in best.get("words") or []:
+            start = _t(word.get("startTime"))
+            end = _t(word.get("endTime"))
+            if start is None or end is None or end <= start:
+                continue
+            word_ranges.append((start, end))
+
+    if not word_ranges:
+        for seg in build_segments(op_json):
+            start = seg.get("s")
+            end = seg.get("e")
+            if start is not None and end is not None and end > start:
+                word_ranges.append((float(start), float(end)))
+
+    if not word_ranges:
+        return []
+
+    max_gap = max(0.0, float(max_gap_sec or 0.0))
+    padding = max(0.0, float(padding_sec or 0.0))
+    word_ranges.sort()
+
+    merged: List[Tuple[float, float]] = []
+    cur_start, cur_end = word_ranges[0]
+    for start, end in word_ranges[1:]:
+        if start - cur_end <= max_gap:
+            cur_end = max(cur_end, end)
+        else:
+            merged.append((max(0.0, cur_start - padding), cur_end + padding))
+            cur_start, cur_end = start, end
+    merged.append((max(0.0, cur_start - padding), cur_end + padding))
+    return merged
+
+
 def parse_analysis_status(llm_text: str) -> Dict[str, str]:
     """
     Pulls the business status from model output into a stable API object.

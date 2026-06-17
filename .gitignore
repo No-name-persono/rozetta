@@ -19,6 +19,7 @@ tmp_audio/
 .ruff_cache/
 .coverage
 htmlcov/
+*.zip
 
 .DS_Store
 Thumbs.db

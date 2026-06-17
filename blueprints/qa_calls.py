@@ -9,7 +9,13 @@ from config import DEFAULTS, ALLOWED_EXTS, TMP_DIR, TEMPLATES_PATH
 from services.storage import upload_local_file, delete_remote
 from services.asr import start_long, poll_once
 from services.llm import analyze_with_llm, build_system_with_checklist
-from services.parsing import build_segments, parse_analysis_status, parse_checklist, annotate_checklist_with_timestamps
+from services.parsing import (
+    annotate_checklist_with_timestamps,
+    build_segments,
+    build_speech_ranges,
+    parse_analysis_status,
+    parse_checklist,
+)
 from services.spectral import analyze_audio_report
 import json
 import logging
@@ -106,10 +112,17 @@ def _spectral_kwargs() -> Dict[str, Any]:
     }
 
 
-def _build_soft_labels(local_path: str, filename: str) -> str | None:
+def _build_soft_labels(
+    local_path: str,
+    filename: str,
+    speech_ranges: list[tuple[float, float]] | None = None,
+) -> str | None:
     if not DEFAULTS.get("SPECTRAL_ENABLED"):
         return None
-    report = analyze_audio_report(local_path, **_spectral_kwargs())
+    kwargs = _spectral_kwargs()
+    if DEFAULTS.get("SPECTRAL_STT_GUIDED_ENABLED", True):
+        kwargs["speech_ranges"] = speech_ranges or []
+    report = analyze_audio_report(local_path, **kwargs)
     if not report.get("ok"):
         log.warning(
             "spectral failed for %s: %s",
@@ -118,7 +131,13 @@ def _build_soft_labels(local_path: str, filename: str) -> str | None:
         )
         return None
     compact = report.get("compact")
-    log.info("spectral OK for %s (%d chars)", filename, len(compact or ""))
+    log.info(
+        "spectral OK for %s (%d chars, guided=%s, ranges=%d)",
+        filename,
+        len(compact or ""),
+        bool(report.get("speech_guided")),
+        int(report.get("speech_ranges_count", 0) or 0),
+    )
     return compact or None
 
 
@@ -199,18 +218,6 @@ def _process_item(
         op_id = start_long(uri, enc=ENCODING_BY_EXT[ext])
         _update_item(batch_id, item_id, op_id=op_id, stage="Распознаём аудио…", progress=20)
 
-        soft_labels = None
-        if DEFAULTS.get("SPECTRAL_ENABLED"):
-            _update_item(batch_id, item_id, stage="Считаем мягкие метки спикеров…", progress=25)
-            soft_labels = _build_soft_labels(local_path, filename)
-            _update_item(
-                batch_id,
-                item_id,
-                soft_labels=soft_labels,
-                stage="Распознаём аудио…",
-                progress=max(_get_item_progress(batch_id, item_id, 25), 35),
-            )
-
         js = _wait_for_asr(batch_id, item_id, op_id)
         asr_terminal = True
         if js.get("error"):
@@ -218,6 +225,30 @@ def _process_item(
 
         segs = build_segments(js)
         transcript = _build_transcript(segs)
+
+        soft_labels = None
+        if DEFAULTS.get("SPECTRAL_ENABLED"):
+            speech_ranges = build_speech_ranges(
+                js,
+                max_gap_sec=DEFAULTS.get("SPECTRAL_STT_MAX_GAP_SEC", 0.8),
+                padding_sec=DEFAULTS.get("SPECTRAL_STT_PADDING_SEC", 0.2),
+            )
+            _update_item(
+                batch_id,
+                item_id,
+                stage="Считаем мягкие метки спикеров по репликам…",
+                progress=82,
+                segments=segs,
+                transcript=transcript,
+            )
+            soft_labels = _build_soft_labels(local_path, filename, speech_ranges=speech_ranges)
+            _update_item(
+                batch_id,
+                item_id,
+                soft_labels=soft_labels,
+                speech_ranges_count=len(speech_ranges),
+            )
+
         _update_item(
             batch_id,
             item_id,
@@ -333,6 +364,7 @@ def create_batch_from_uploads(
             "segments": [],
             "transcript": None,
             "soft_labels": None,
+            "speech_ranges_count": None,
             "llm": None,
             "analysis_status": None,
             "checklist": None,

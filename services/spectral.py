@@ -176,12 +176,63 @@ def _build_mel_filterbank(n_mels: int, frame_len: int, sr: int):
     return fb
 
 
-def _extract_features(data: np.ndarray, sr: int, frame_len: int = 512, hop: int = 512):
+def _normalize_speech_ranges(
+    speech_ranges: Optional[list[tuple[float, float]]],
+    duration_sec: float,
+) -> Optional[list[tuple[float, float]]]:
+    if not speech_ranges:
+        return None
+
+    ranges = []
+    for start, end in speech_ranges:
+        try:
+            s = max(0.0, float(start))
+            e = min(float(duration_sec), float(end))
+        except (TypeError, ValueError):
+            continue
+        if e > s:
+            ranges.append((s, e))
+    if not ranges:
+        return None
+
+    ranges.sort()
+    merged = []
+    cur_s, cur_e = ranges[0]
+    for s, e in ranges[1:]:
+        if s <= cur_e:
+            cur_e = max(cur_e, e)
+        else:
+            merged.append((cur_s, cur_e))
+            cur_s, cur_e = s, e
+    merged.append((cur_s, cur_e))
+    return merged
+
+
+def _frame_in_speech_ranges(start: float, end: float, ranges: Optional[list[tuple[float, float]]]) -> bool:
+    if not ranges:
+        return True
+    for range_start, range_end in ranges:
+        if end < range_start:
+            return False
+        if start <= range_end and end >= range_start:
+            return True
+    return False
+
+
+def _extract_features(
+    data: np.ndarray,
+    sr: int,
+    frame_len: int = 512,
+    hop: int = 512,
+    speech_ranges: Optional[list[tuple[float, float]]] = None,
+):
     """
     Извлекает MFCC + спектральные полосы + центроид + энергию для каждого фрейма.
     Возвращает (features, energies, times, speech_mask).
     """
     n_frames = len(data) // hop - 1
+    duration_sec = len(data) / float(sr or 1)
+    guided_ranges = _normalize_speech_ranges(speech_ranges, duration_sec)
     freq_bins = fftfreq(frame_len, 1.0 / sr)[:frame_len // 2]
     filterbank = _build_mel_filterbank(13, frame_len, sr)
     window = np.hanning(frame_len)
@@ -196,6 +247,11 @@ def _extract_features(data: np.ndarray, sr: int, frame_len: int = 512, hop: int 
         frame = data[i * hop: i * hop + frame_len]
         energy = float(np.sum(frame ** 2))
         energies[i] = energy
+        frame_start = float(i * hop / sr)
+        frame_end = float((i * hop + frame_len) / sr)
+
+        if not _frame_in_speech_ranges(frame_start, frame_end, guided_ranges):
+            continue
 
         if energy < 0.0005:
             continue
@@ -1494,6 +1550,7 @@ def analyze_audio(
     n_speakers: int = 2,
     ivr_cutoff_sec: float = 0.0,
     confidence_cutoff: float = 0.55,
+    speech_ranges: Optional[list[tuple[float, float]]] = None,
 ) -> Optional[str]:
     """
     Анализирует аудиофайл и возвращает компактные мягкие метки
@@ -1522,7 +1579,7 @@ def analyze_audio(
 
         # Извлекаем признаки
         features, energies, times, speech_mask, speech_indices = _extract_features(
-            data, sr
+            data, sr, speech_ranges=speech_ranges
         )
         del data  # освобождаем память
 
@@ -1586,6 +1643,7 @@ def analyze_audio_report(
     transient_min_sec: float = 4.0,
     transient_distance_threshold: float = 9.0,
     transient_local_speakers: int = 3,
+    speech_ranges: Optional[list[tuple[float, float]]] = None,
 ) -> dict:
     wav_path = None
     try:
@@ -1595,7 +1653,9 @@ def analyze_audio_report(
             raw = raw.mean(axis=1)
         data = raw.astype(np.float32) / 32768.0
 
-        features, energies, times, speech_mask, speech_indices = _extract_features(data, sr)
+        features, energies, times, speech_mask, speech_indices = _extract_features(
+            data, sr, speech_ranges=speech_ranges
+        )
         f0_values, f0_clarity = _estimate_f0_track(data, sr, speech_indices)
         duration_seconds = len(data) / float(sr or 1)
         del data
@@ -1606,6 +1666,7 @@ def analyze_audio_report(
                 "error": f"Too few speech frames for analysis: {len(features)}.",
                 "duration_seconds": _round_float(duration_seconds, 1),
                 "duration_label": _fmt_mmss(duration_seconds),
+                "speech_guided": bool(speech_ranges),
             }
 
         speech_times = times[speech_indices]
@@ -1639,6 +1700,7 @@ def analyze_audio_report(
                 "error": "Speaker clustering returned no labels.",
                 "duration_seconds": _round_float(duration_seconds, 1),
                 "duration_label": _fmt_mmss(duration_seconds),
+                "speech_guided": bool(speech_ranges),
             }
 
         transient_policy = {"enabled": False, "added": 0}
@@ -1694,6 +1756,10 @@ def analyze_audio_report(
         report["sample_rate"] = sr
         report["source_name"] = os.path.basename(audio_path)
         report["method"] = method_label
+        if speech_ranges:
+            report["method"] += " + STT-guided"
+        report["speech_guided"] = bool(speech_ranges)
+        report["speech_ranges_count"] = len(speech_ranges or [])
         report["windows"] = windows
         report["pitch_frames"] = int((f0_values > 0).sum())
         report["transient_policy"] = transient_policy
