@@ -1,0 +1,15 @@
+services:
+  rozeeta:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "5010:5010"
+    volumes:
+      - rozeeta-data:/app/data
+      - rozeeta-tmp:/app/tmp_audio
+    restart: unless-stopped
+
+volumes:
+  rozeeta-data:
+  rozeeta-tmp:

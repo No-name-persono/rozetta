@@ -1,0 +1,24 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h2>Пакетная обработка звонков</h2>
+<form method="post" action="{{ url_for('qa_calls.start_batch') }}" enctype="multipart/form-data">
+  <div class="grid">
+    <div>
+      <label>Файлы (до 10):</label>
+      <input type="file" name="audio_files" accept=".mp3,.ogg,.opus" multiple required>
+      <p class="muted">Поддерживаются .mp3/.ogg/.opus</p>
+    </div>
+    <div>
+      <label>Промт:</label>
+      <select name="prompt_id" required>
+        {% for p in prompts %}<option value="{{ p.id }}">{{ p.title }}{% if p.locked %} 🔒{% endif %}</option>{% endfor %}
+      </select>
+      <label>Чек-лист:</label>
+      <select name="checklist_id" required>
+        {% for c in checklists %}<option value="{{ c.id }}">{{ c.title }}{% if c.locked %} 🔒{% endif %}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+  <button class="btn" type="submit">Запустить пакет</button>
+</form>
+{% endblock %}

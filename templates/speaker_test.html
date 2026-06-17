@@ -1,0 +1,268 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h2>Тест распознавания спикеров</h2>
+<p class="muted">Локальный спектральный анализ без отправки аудио в STT/LLM.</p>
+
+<form class="card" method="post" action="{{ url_for('speaker_lab.speaker_test') }}" enctype="multipart/form-data">
+  <div class="grid speaker-form">
+    <div>
+      <label>Аудиофайл</label>
+      <input type="file" name="audio_file" accept=".mp3,.ogg,.opus,.wav" required>
+      <p class="muted">Поддерживаются {{ allowed_exts }}.</p>
+    </div>
+    <div class="controls-grid">
+      <label>
+        Ожидаемых спикеров
+        <input type="number" name="n_speakers" min="1" max="8" step="1" value="{{ params.n_speakers }}">
+      </label>
+      <label>
+        IVR cutoff, сек
+        <input type="number" name="ivr_cutoff_sec" min="0" max="600" step="1" value="{{ params.ivr_cutoff_sec }}">
+      </label>
+      <label>
+        Confidence cutoff
+        <input type="number" name="confidence_cutoff" min="0" max="1" step="0.01" value="{{ params.confidence_cutoff }}">
+      </label>
+      <label>
+        Группировка, сек
+        <input type="number" name="group_sec" min="5" max="600" step="5" value="{{ params.group_sec }}">
+      </label>
+      <label>
+        Метод
+        <select name="method">
+          <option value="windowed" {% if params.method == 'windowed' %}selected{% endif %}>Окна речи</option>
+          <option value="frame" {% if params.method == 'frame' %}selected{% endif %}>Старый frame GMM</option>
+        </select>
+      </label>
+      <label>
+        Окно, сек
+        <input type="number" name="window_sec" min="0.8" max="10" step="0.1" value="{{ params.window_sec }}">
+      </label>
+      <label>
+        Шаг окна, сек
+        <input type="number" name="step_sec" min="0.2" max="5" step="0.1" value="{{ params.step_sec }}">
+      </label>
+      <label>
+        Склейка коротких, сек
+        <input type="number" name="min_block_sec" min="0" max="30" step="0.5" value="{{ params.min_block_sec }}">
+      </label>
+      <label>
+        Сомнительная короткая, сек
+        <input type="number" name="short_uncertain_sec" min="0" max="20" step="0.5" value="{{ params.short_uncertain_sec }}">
+      </label>
+      <label>
+        Якорный блок, сек
+        <input type="number" name="anchor_min_sec" min="2" max="60" step="1" value="{{ params.anchor_min_sec }}">
+      </label>
+      <label>
+        Проверять mixed от, сек
+        <input type="number" name="mixed_check_sec" min="0" max="60" step="0.5" value="{{ params.mixed_check_sec }}">
+      </label>
+      <label>
+        Мин. часть mixed, сек
+        <input type="number" name="mixed_min_part_sec" min="0.4" max="20" step="0.1" value="{{ params.mixed_min_part_sec }}">
+      </label>
+      <label>
+        Micro-окно, сек
+        <input type="number" name="micro_window_sec" min="0.5" max="6" step="0.1" value="{{ params.micro_window_sec }}">
+      </label>
+      <label>
+        Micro-шаг, сек
+        <input type="number" name="micro_step_sec" min="0.1" max="3" step="0.05" value="{{ params.micro_step_sec }}">
+      </label>
+      <label class="check-row">
+        <input type="checkbox" name="transient_enabled" value="1" {% if params.transient_enabled %}checked{% endif %}>
+        Искать раннего transient-спикера
+      </label>
+      <label>
+        Transient поиск до, сек
+        <input type="number" name="transient_search_sec" min="0" max="300" step="5" value="{{ params.transient_search_sec }}">
+      </label>
+      <label>
+        Поздние якори после, сек
+        <input type="number" name="transient_late_start_sec" min="0" max="600" step="5" value="{{ params.transient_late_start_sec }}">
+      </label>
+      <label>
+        Мин. transient, сек
+        <input type="number" name="transient_min_sec" min="1" max="60" step="0.5" value="{{ params.transient_min_sec }}">
+      </label>
+      <label>
+        Дистанция transient
+        <input type="number" name="transient_distance_threshold" min="1" max="30" step="0.5" value="{{ params.transient_distance_threshold }}">
+      </label>
+      <label>
+        Локальных кластеров
+        <input type="number" name="transient_local_speakers" min="2" max="6" step="1" value="{{ params.transient_local_speakers }}">
+      </label>
+    </div>
+  </div>
+  <button class="btn" type="submit">Проанализировать</button>
+</form>
+
+{% if report %}
+  <section class="card">
+    <h3>{{ report.display_name or filename }}</h3>
+    {% if report.ok %}
+      <p class="muted">Метод: {{ report.method }} · Длительность: {{ report.duration_label }} · Sample rate: {{ report.sample_rate }} Hz</p>
+
+      <div class="metric-grid">
+        <div><b>{{ report.metrics.estimated_total_speakers or report.metrics.detected_clusters }}</b><span>оценка спикеров</span></div>
+        <div><b>{{ report.metrics.speaker_blocks }}</b><span>блоков речи</span></div>
+        <div><b>{{ report.metrics.change_points }}</b><span>смен спикера</span></div>
+        <div><b>{{ report.metrics.avg_confidence }}</b><span>avg confidence</span></div>
+        <div><b>{{ report.metrics.short_unknown_blocks }}</b><span>UNK коротких</span></div>
+        <div><b>{{ report.metrics.mixed_blocks }}</b><span>mixed-блоков</span></div>
+      </div>
+      {% if report.transient_policy and report.transient_policy.enabled %}
+        <p class="muted">Transient поиск: добавлено {{ report.transient_policy.added }} спикер(ов).{% if report.transient_policy.reason %} Причина: {{ report.transient_policy.reason }}.{% endif %}</p>
+        {% if report.transient_policy.added_speakers %}
+          <table class="table compact">
+            <thead><tr><th>Transient</th><th>Диапазон</th><th>Длительность</th><th>Дистанция</th><th>Ближайший основной</th><th>F0</th></tr></thead>
+            <tbody>
+              {% for tr in report.transient_policy.added_speakers %}
+                <tr><td>{{ tr.speaker }}</td><td>{{ tr.range }}</td><td>{{ tr.duration }} c</td><td>{{ tr.distance }}</td><td>{{ tr.nearest_main }}</td><td>{% if tr.f0_hz %}{{ tr.f0_hz }} Hz{% else %}—{% endif %}</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      {% endif %}
+      <p class="muted">Речи по VAD: {{ report.metrics.speech_ratio_percent }}% · Аудио-фрагментов: {{ report.clip_count or 0 }} · Фрагменты вырезаны локально и привязаны к блокам ниже.</p>
+      {% if report.short_policy and report.short_policy.enabled %}
+        <p class="muted">Короткие реплики: {{ report.short_policy.reassigned_blocks }} переназначено по якорям, {{ report.short_policy.unknown_blocks }} помечено как UNK. Якорные блоки: {{ report.short_policy.anchor_blocks }}.</p>
+      {% endif %}
+      {% if report.mixed_policy and report.mixed_policy.enabled %}
+        <p class="muted">Проверка смешанных блоков: {{ report.mixed_policy.mixed_blocks }} исходных блок(ов) раздроблено на {{ report.mixed_policy.created_subblocks }} подблок(ов), {{ report.mixed_policy.unknown_subblocks }} подблок(ов) ушли в UNK.</p>
+      {% endif %}
+
+      <h4>Кластеры</h4>
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Кластер</th>
+            <th>Время речи</th>
+            <th>Доля</th>
+            <th>Блоки</th>
+            <th>Avg conf</th>
+            <th>F0</th>
+            <th>Центроид</th>
+            <th>Средний блок</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sp in report.speakers %}
+            <tr>
+              <td><span class="speaker-chip">{{ sp.speaker }}</span>{% if sp.note %}<div class="muted">{{ sp.note }}</div>{% endif %}</td>
+              <td>{{ sp.talk_seconds }} c</td>
+              <td>{{ sp.talk_percent }}%</td>
+              <td>{{ sp.blocks }}</td>
+              <td>{{ sp.avg_confidence }}</td>
+              <td>{% if sp.f0_hz %}{{ sp.f0_hz }} Hz{% else %}—{% endif %}</td>
+              <td>{% if sp.centroid_hz %}{{ sp.centroid_hz }} Hz{% else %}—{% endif %}</td>
+              <td>{{ sp.avg_block_seconds }} c</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <h4>Группировка по временным меткам</h4>
+      {% for group in report.time_groups %}
+        <details class="time-group" open>
+          <summary>{{ group.label }} · {{ group.blocks|length }} блок(ов)</summary>
+          <table class="table compact">
+            <thead>
+              <tr>
+                <th>Время</th>
+                <th>Кластер</th>
+                <th>Длительность</th>
+                <th>Conf</th>
+                <th>F0</th>
+                <th>Центроид</th>
+                <th>Dominant band</th>
+                <th>Energy</th>
+                <th>Аудио</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for block in group.blocks %}
+                <tr class="{{ 'low-confidence' if block.low_confidence else '' }}">
+                  <td>{{ block.start_label }}–{{ block.end_label }}</td>
+                  <td><span class="speaker-chip">{{ block.speaker }}</span></td>
+                  <td>{{ block.duration }} c</td>
+                  <td>{{ block.confidence }}</td>
+                  <td>{% if block.f0_hz %}{{ block.f0_hz }} Hz{% else %}—{% endif %}</td>
+                  <td>{% if block.centroid_hz %}{{ block.centroid_hz }} Hz{% else %}—{% endif %}</td>
+                  <td>{{ block.dominant_band }}</td>
+                  <td>{{ block.avg_energy }}</td>
+                  <td>
+                    {% if block.clip_url %}
+                      <audio class="clip-player" controls preload="none" src="{{ block.clip_url }}"></audio>
+                    {% else %}
+                      <span class="muted">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      {% endfor %}
+
+      <div class="grid2">
+        <section>
+          <h4>Смены спикеров</h4>
+          {% if report.change_points_list %}
+            <table class="table compact">
+              <thead><tr><th>Время</th><th>Переход</th><th>Conf</th></tr></thead>
+              <tbody>
+                {% for cp in report.change_points_list %}
+                  <tr><td>{{ cp.time_label }}</td><td>{{ cp.from }} → {{ cp.to }}</td><td>{{ cp.confidence }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p class="muted">Смены выше порога confidence не найдены.</p>
+          {% endif %}
+        </section>
+        <section>
+          <h4>Всплески энергии</h4>
+          {% if report.energy_spikes_list %}
+            <table class="table compact">
+              <thead><tr><th>Время</th><th>Интенсивность</th></tr></thead>
+              <tbody>
+                {% for spike in report.energy_spikes_list %}
+                  <tr><td>{{ spike.start_label }}–{{ spike.end_label }}</td><td>{{ spike.intensity }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          {% else %}
+            <p class="muted">Сильные всплески энергии не найдены.</p>
+          {% endif %}
+        </section>
+      </div>
+
+      <h4>Средний спектральный профиль кластеров</h4>
+      <div class="band-grid">
+        {% for sp in report.speakers %}
+          <div class="band-card">
+            <h5>{{ sp.speaker }}</h5>
+            {% for label, value in sp.band_profile.items() %}
+              <div class="band-row">
+                <span>{{ label }} Hz</span>
+                <meter min="0" max="1" value="{{ value }}"></meter>
+                <code>{{ value }}</code>
+              </div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+      </div>
+
+      <details class="spectral-debug">
+        <summary>Сырой compact output</summary>
+        <pre>{{ report.compact }}</pre>
+      </details>
+    {% else %}
+      <p class="error">{{ report.error }}</p>
+    {% endif %}
+  </section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h3>Обработка пакета…</h3>
+<div class="card">
+  <div class="bar"><div id="fill" class="fill" style="width:0%"></div></div>
+  <div class="row"><div id="stage" class="muted">Подготовка…</div><div id="pct">0%</div></div>
+  <div id="items" class="job-list"></div>
+</div>
+<script>
+(async function(){
+  const fill=document.getElementById('fill');
+  const pct=document.getElementById('pct');
+  const stage=document.getElementById('stage');
+  const items=document.getElementById('items');
+
+  function renderItems(rows){
+    if(!Array.isArray(rows)){ return; }
+    items.innerHTML = rows.map((row)=>{
+      const progress = Math.max(0, Math.min(100, Number(row.progress || 0)));
+      const status = String(row.status || '');
+      const cls = status === 'error' ? ' error' : (status === 'done' ? ' done' : '');
+      return `
+        <div class="job-row${cls}">
+          <div class="job-head">
+            <b>${escapeHtml(row.filename || 'audio')}</b>
+            <span>${progress}%</span>
+          </div>
+          <div class="bar small"><div class="fill" style="width:${progress}%"></div></div>
+          <div class="muted">${escapeHtml(row.stage || '')}</div>
+        </div>`;
+    }).join('');
+  }
+
+  function escapeHtml(value){
+    return String(value)
+      .replaceAll('&','&amp;')
+      .replaceAll('<','&lt;')
+      .replaceAll('>','&gt;')
+      .replaceAll('"','&quot;')
+      .replaceAll("'","&#039;");
+  }
+
+  async function poll(){
+    try{
+      const r=await fetch('{{ url_for('qa_calls.status_batch', batch_id=batch_id) }}');
+      const js=await r.json();
+      if(typeof js.progress==='number'){ fill.style.width = js.progress+'%'; pct.textContent = js.progress+'%'; }
+      if(js.stage){ stage.textContent = js.stage; document.title = js.stage; }
+      renderItems(js.items);
+      if(js.done){ window.location = js.redirect; return; }
+    }catch(e){}
+    setTimeout(poll, 1200);
+  }
+  poll();
+})();
+</script>
+{% endblock %}

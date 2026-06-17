@@ -1,0 +1,11 @@
+flask
+boto3
+requests
+python-dotenv
+gunicorn
+
+# Спектральный анализ (speaker diarization)
+numpy
+scipy
+scikit-learn
+imageio-ffmpeg

@@ -1,0 +1,121 @@
+{% extends 'layout.html' %}
+{% block content %}
+<h2>Шаблоны</h2>
+
+<!-- === Промты === -->
+<section class="card">
+  <h3>Промты</h3>
+  <table class="table">
+    <thead><tr><th>Название</th><th>Текст</th><th></th><th></th></tr></thead>
+    <tbody>
+    {% for p in prompts %}
+      <tr>
+        <td>
+          <form method="post" action="{{ url_for('admin.update_prompt') }}">
+            <input type="hidden" name="id" value="{{ p.id }}">
+            <input type="text" name="title" value="{{ p.title }}" {{ 'disabled' if p.locked else '' }}>
+        </td>
+        <td>
+            <textarea name="system" {{ 'disabled' if p.locked else '' }}>{{ p.system }}</textarea>
+        </td>
+        <td>
+            {% if p.locked %}
+              <span class="muted">🔒</span>
+            {% else %}
+              <button class="btn" type="submit">Сохранить</button>
+            {% endif %}
+          </form>
+        </td>
+        <td>
+          {% if not p.locked %}
+          <form method="post" action="{{ url_for('admin.delete_prompt') }}" onsubmit="return confirm('Удалить промт?')">
+            <input type="hidden" name="id" value="{{ p.id }}">
+            <button class="btn ghost" type="submit">Удалить</button>
+          </form>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h4 style="margin-top:1rem">Добавить промт</h4>
+  <form method="post" action="{{ url_for('admin.add_prompt') }}">
+    <div class="grid">
+      <div><input type="text" name="title" placeholder="Название" required></div>
+      <div><textarea name="system" placeholder="System-промт" required></textarea></div>
+    </div>
+    <button class="btn" type="submit" style="margin-top:.5rem">Добавить</button>
+  </form>
+</section>
+
+<!-- === Чек-листы === -->
+<section class="card">
+  <h3>Чек‑листы</h3>
+  <table class="table">
+    <thead><tr><th>Название</th><th>Пункты</th><th></th><th></th></tr></thead>
+    <tbody>
+    {% for c in checklists %}
+      <tr>
+        <td>
+          <form method="post" action="{{ url_for('admin.update_checklist') }}">
+            <input type="hidden" name="id" value="{{ c.id }}">
+            <input type="text" name="title" value="{{ c.title }}" {{ 'disabled' if c.locked else '' }}>
+        </td>
+        <td>
+            <div id="items-{{ c.id }}">
+              {% for it in c["items"] %}
+                <div class="row">
+                  <input type="text" name="item_{{ loop.index }}" value="{{ it }}" {{ 'disabled' if c.locked else '' }}>
+                </div>
+              {% endfor %}
+            </div>
+            {% if not c.locked %}
+            <button type="button" class="btn ghost" onclick="addItem('{{ c.id }}')">+ пункт</button>
+            {% endif %}
+        </td>
+        <td>
+            {% if c.locked %}
+              <span class="muted">🔒</span>
+            {% else %}
+              <button class="btn" type="submit">Сохранить</button>
+            {% endif %}
+          </form>
+        </td>
+        <td>
+          {% if not c.locked %}
+          <form method="post" action="{{ url_for('admin.delete_checklist') }}" onsubmit="return confirm('Удалить чек-лист?')">
+            <input type="hidden" name="id" value="{{ c.id }}">
+            <button class="btn ghost" type="submit">Удалить</button>
+          </form>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h4 style="margin-top:1rem">Добавить чек‑лист</h4>
+  <form method="post" action="{{ url_for('admin.add_checklist') }}">
+    <div class="grid">
+      <div><input type="text" name="title" placeholder="Название чек‑листа" required></div>
+      <div>
+        <div id="new-items"></div>
+        <button type="button" class="btn ghost" onclick="addItem('new')">+ пункт</button>
+      </div>
+    </div>
+    <button class="btn" type="submit" style="margin-top:.5rem">Добавить</button>
+  </form>
+</section>
+
+<script>
+function addItem(id){
+  const box = document.getElementById(id==='new' ? 'new-items' : ('items-'+id));
+  const i = box.querySelectorAll('input').length + 1;
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<input type="text" name="item_${i}" placeholder="Пункт ${i}" required>`;
+  box.appendChild(row);
+}
+</script>
+{% endblock %}

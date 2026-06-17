@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>{{ title or 'QA Calls' }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <header class="container">
+    <nav>
+      <a href="{{ url_for('qa_calls.index') }}">Загрузка</a>
+      <a href="{{ url_for('speaker_lab.speaker_test') }}">Тест спикеров</a>
+      <a href="{{ url_for('admin.templates_page') }}">Шаблоны</a>
+    </nav>
+  </header>
+  <main class="container">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}<ul class="flash">{% for m in messages %}<li>{{ m }}</li>{% endfor %}</ul>{% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,133 @@
+
+{% extends 'layout.html' %}
+{% block content %}
+<h2>Результаты пакета</h2>
+<p class="muted">Промт: <b>{{ batch.prompt_title }}</b> · Чек-лист: <b>{{ batch.checklist_title }}</b></p>
+
+<div class="tabs" role="tablist" aria-label="Записи пакета">
+  {% for it in batch["items"] %}
+    <button class="tab" type="button" data-idx="{{ loop.index0 }}" role="tab" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ it.filename }}</button>
+  {% endfor %}
+</div>
+
+<div id="views">
+{% for it in batch["items"] %}
+  <section id="rec-{{ loop.index0 }}" class="card rec-view" data-idx="{{ loop.index0 }}" style="display: {{ 'block' if loop.first else 'none' }}">
+    <h3>{{ it.filename }}</h3>
+
+    {% if it.status == 'error' %}
+      <p class="error">{{ it.stage }}</p>
+    {% else %}
+      {% if it.analysis_status %}
+        <p class="muted">
+          Статус анализа:
+          <b>{{ it.analysis_status.label or it.analysis_status.value }}</b>
+          {% if it.analysis_status.reason %} — {{ it.analysis_status.reason }}{% endif %}
+        </p>
+      {% endif %}
+      <div class="split">
+        <div class="col">
+          <h4>1) Расшифровка</h4>
+          {% if it.segments and it.segments|length %}
+            {% for seg in it.segments %}
+              <div id="{{ seg.id }}" class="seg">
+                <div class="muted">Фрагмент {{ seg.mmss }}–{{ seg.e_mmss }}</div>
+                <div style="white-space:pre-wrap">{{ seg.text }}</div>
+              </div>
+            {% endfor %}
+          {% else %}
+            <pre>{{ it.transcript }}</pre>
+          {% endif %}
+        </div>
+        <div class="col col-right">
+          <h4>2) Ответ модели</h4>
+          <pre>{{ it.llm }}</pre>
+        </div>
+      </div>
+
+      {% if it.soft_labels %}
+        <details class="spectral-debug">
+          <summary>Спектральные подсказки спикеров</summary>
+          <pre>{{ it.soft_labels }}</pre>
+        </details>
+      {% else %}
+        <p class="muted">Спектральные подсказки: нет данных</p>
+      {% endif %}
+
+      <h4>3) Чек-лист</h4>
+      <table class="table">
+        <thead><tr><th>Пункт</th><th>Статус</th><th>Цитата</th><th>Метка</th></tr></thead>
+        <tbody>
+          {% for item, row in it.checklist.items() %}
+            {% set cls = 'ok' if row.status.lower()=='да' else ('bad' if row.status.lower()=='нет' else 'na') %}
+            <tr>
+              <td>{{ item }}</td>
+              <td><span class="tag {{ cls }}">{{ row.status }}</span></td>
+              <td>{{ row.quote }}</td>
+              <td>
+                {% if row.seg_id and row.ts %}
+                  <a href="#" class="muted ts-link" data-seg="{{ row.seg_id }}">{{ row.ts }}</a>
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+
+    {% if loop.last %}
+      <div class="actions"><a class="btn" href="{{ url_for('qa_calls.index') }}">Проверить ещё одну запись</a></div>
+    {% endif %}
+  </section>
+{% endfor %}
+</div>
+
+<script>
+(function(){
+  const tabs = Array.from(document.querySelectorAll('.tab'));
+  const views = Array.from(document.querySelectorAll('.rec-view'));
+  let currentIdx = 0;
+
+  function show(idx){
+    currentIdx = idx;
+    tabs.forEach((t,i)=>{
+      const active = (i===idx);
+      t.setAttribute('aria-selected', active ? 'true' : 'false');
+      t.classList.toggle('active', active);
+    });
+    views.forEach(v=>{
+      v.style.display = (+v.dataset.idx === idx) ? 'block' : 'none';
+    });
+    try { history.replaceState(null, '', location.pathname + '?i=' + idx); } catch(e){}
+  }
+
+  const sp = new URLSearchParams(location.search);
+  const i = parseInt(sp.get('i') || '0', 10);
+  const start = isFinite(i) && i >= 0 && i < tabs.length ? i : 0;
+  show(start);
+
+  tabs.forEach((t)=>{
+    t.addEventListener('click', ()=> show(+t.dataset.idx));
+  });
+
+  // Клик по временной метке — плавная прокрутка к нужному сегменту в текущей записи
+  const viewsRoot = document.getElementById('views');
+  const esc = (window.CSS && CSS.escape) ? CSS.escape : (s)=>s.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+  viewsRoot.addEventListener('click', (e)=>{
+    const a = e.target.closest('.ts-link');
+    if(!a) return;
+    e.preventDefault();
+    const segId = a.dataset.seg;
+    const container = document.querySelector('.rec-view[data-idx="'+currentIdx+'"]');
+    if(!container || !segId) return;
+    const el = container.querySelector('#'+esc(segId));
+    if(!el) return;
+    el.scrollIntoView({behavior:'smooth', block:'start'});
+    el.classList.add('flash');
+    setTimeout(()=> el.classList.remove('flash'), 2500);
+  });
+})();
+</script>
+{% endblock %}
